@@ -52,7 +52,7 @@ X_test_scaled = scaler.transform(X_test)
 
 print('ЕТАП 5: НАВЧАННЯ МОДЕЛІ')
 # створюємо та навчаємо модель
-# будуємо класичну лінійну регресію (OLS): модель мінімізує суму квадратів похибок (MSE).
+# будуємо класичну лінійну регресію (OLS ordinary least squares): модель мінімізує суму квадратів похибок (MSE).
 model = LinearRegression()
 model.fit(X_train_scaled, y_train)
 
@@ -85,23 +85,23 @@ print('\nКоефіцієнти OLS:\n', coefficients)
 
 # ---------------------------------------------------------------
 # ЕТАП 8: ДОДАЄМО ДВІ ШТРАФНІ ФУНКЦІЇ (РЕГУЛЯРИЗАЦІЮ)
-# Ridge (L2): додає до втрат суму квадратів коефіцієнтів: α * ||w||_2^2
-# Lasso (L1): додає до втрат суму модулів коефіцієнтів: α * ||w||_1
+# Ridge (L2): додає до втрат суму квадратів коефіцієнтів: alpha * ||w||_2^2
+# Lasso (L1): додає до втрат суму модулів коефіцієнтів: alpha * ||w||_1
 # Обидві зменшують "розмах" коефіцієнтів і борються з мультиколінеарністю/overfitting.
 # Ridge зменшує всі коефіцієнти плавно; Lasso може занулювати деякі (фічер-селекція).
-# Для підбору сили штрафу α використаємо крос-валідацію (CV) на сітці.
+# Для підбору сили штрафу alpha використаємо крос-валідацію (CV) на сітці.
 # ---------------------------------------------------------------
 
 print('ЕТАП 8: НАВЧАННЯ RidgeCV (L2) та LassoCV (L1) з підбором alpha')
 
-# сітка можливих α (логарифмічна шкала)
+# сітка можливих alpha (логарифмічна шкала)
 alphas = np.logspace(-3, 3, 21)  # від 0.001 до 1000
 
 # RidgeCV: за замовчуванням оптимізує за MSE через cross-val
 ridge = RidgeCV(alphas=alphas, cv=5)
 ridge.fit(X_train_scaled, y_train)
 
-# LassoCV: підбирає α, тут бажано збільшити max_iter на випадок повільної збіжності
+# LassoCV: підбирає alpha, тут бажано збільшити max_iter на випадок повільної збіжності
 lasso = LassoCV(alphas=alphas, cv=5, max_iter=10000, random_state=random_shuffle)
 lasso.fit(X_train_scaled, y_train)
 
@@ -137,11 +137,112 @@ print('ЕТАП 11: Порівняння коефіцієнтів (OLS vs Ridge 
 n_zeros_lasso = np.sum(np.isclose(lasso.coef_, 0.0))
 print(f"Lasso занулило коефіцієнтів: {n_zeros_lasso} із {len(lasso.coef_)}")
 
-print('ЕТАП 12: ВІЗУАЛІЗАЦІЯ ПОРІВНЯННЯ МЕТРИК')
+print('ЕТАП 12: ВІЗУАЛІЗАЦІЯ ТА ПОРІВНЯННЯ МЕТРИК')
 metrics_table = pd.DataFrame({
     "Model": ["OLS", "Ridge", "Lasso"],
-    "MSE":   [mse, mse_ridge, mse_lasso],
-    "MAE":   [mae, mae_ridge, mae_lasso],
-    "R2":    [r2,  r2_ridge,  r2_lasso],
+    "MSE": [mse, mse_ridge, mse_lasso],
+    "MAE": [mae, mae_ridge, mae_lasso],
+    "R2": [r2, r2_ridge, r2_lasso],
 })
 print('\nЗведена таблиця метрик:\n', metrics_table)
+
+print('ЕТАП 13: ПАРИТЕТНІ ГРАФІКИ (ŷ проти y) ДЛЯ КОЖНОЇ МОДЕЛІ')
+
+
+def parity_plot(y_true, y_pred, title):
+    plt.figure(figsize=(6, 6))
+    plt.scatter(y_true, y_pred, alpha=0.5, s=25)
+    lo = min(y_true.min(), y_pred.min())
+    hi = max(y_true.max(), y_pred.max())
+    plt.plot([lo, hi], [lo, hi], linestyle='--')  # ідеальна лінія y=x
+    plt.xlabel("Факт (y)")
+    plt.ylabel("Передбачення (ŷ)")
+    plt.title(title)
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+
+parity_plot(y_test, y_pred, "Parity plot — OLS (ŷ vs y)")
+parity_plot(y_test, y_pred_ridge, f"Parity plot — Ridge (α={ridge.alpha_:.3g})")
+parity_plot(y_test, y_pred_lasso, f"Parity plot — Lasso (α={lasso.alpha_:.3g})")
+
+print('ЕТАП 14: ДЕМОНСТРАЦІЯ, ДЕ МОДЕЛЬ ПОМИЛЯЄТЬСЯ')
+
+
+def residual_plots(y_true, y_pred, title_prefix):
+    resid = y_true - y_pred
+
+    # 14.1 Гістограма похибок
+    plt.figure(figsize=(8, 4))
+    plt.hist(resid, bins=20)
+    plt.axvline(0, linestyle='--')
+    plt.title(f"{title_prefix}: розподіл похибок (y - ŷ)")
+    plt.xlabel("Похибка")
+    plt.ylabel("К-сть")
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    # 14.2 Похибка vs Передбачення
+    plt.figure(figsize=(7, 5))
+    plt.scatter(y_pred, resid, alpha=0.5, s=20)
+    plt.axhline(0, linestyle='--')
+    plt.title(f"{title_prefix}: похибка vs передбачення")
+    plt.xlabel("Передбачення (ŷ)")
+    plt.ylabel("Похибка (y - ŷ)")
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+
+residual_plots(y_test, y_pred, "OLS")
+residual_plots(y_test, y_pred_ridge, f"Ridge (α={ridge.alpha_:.3g})")
+residual_plots(y_test, y_pred_lasso, f"Lasso (α={lasso.alpha_:.3g})")
+
+print("ЕТАП 15: Лінії регресії по окремих фічах (OLS/Ridge/Lasso)")
+
+# які фічі показувати
+features_to_plot = ["alcohol", "sulphates", "volatile acidity", "density"]
+
+# середні значення по train (щоб «заморозити» інші ознаки)
+X_train_means = X_train.mean()
+
+
+def predict_line_for_feature(feature_name, model_obj, n_points=200):
+    x_min = X[feature_name].min()
+    x_max = X[feature_name].max()
+    grid = np.linspace(x_min, x_max, n_points)
+
+    # Базова матриця ознак із середніми значеннями
+    X_line = pd.DataFrame([X_train_means.values] * n_points, columns=X.columns)
+    X_line[feature_name] = grid
+
+    # Масштабуємо і прогнозуємо
+    X_line_scaled = scaler.transform(X_line)
+    y_line = model_obj.predict(X_line_scaled)
+    return grid, y_line
+
+
+for feat in features_to_plot:
+    # Фактичні точки з тесту по обраній фічі
+    plt.figure(figsize=(7, 5))
+    plt.scatter(X_test[feat], y_test, alpha=0.55, s=25, label="Факт (test)")
+
+    # Лінії трьох моделей
+    gx, gy_ols = predict_line_for_feature(feat, model)
+    _, gy_ridge = predict_line_for_feature(feat, ridge)
+    _, gy_lasso = predict_line_for_feature(feat, lasso)
+
+    order = np.argsort(gx)
+    plt.plot(gx[order], gy_ols[order], '-', label='OLS')
+    plt.plot(gx[order], gy_ridge[order], '--', label=f'Ridge (α={ridge.alpha_:.3g})')
+    plt.plot(gx[order], gy_lasso[order], ':', label=f'Lasso (α={lasso.alpha_:.3g})')
+
+    plt.title(f"Якість vs {feat}: дані (test) та лінії регресії")
+    plt.xlabel(feat)
+    plt.ylabel("quality")
+    plt.grid(alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
