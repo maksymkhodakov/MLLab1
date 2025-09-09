@@ -2,151 +2,87 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.model_selection import train_test_split
+
+from sklearn.model_selection import train_test_split, learning_curve, validation_curve
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LinearRegression, RidgeCV, LassoCV
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LinearRegression, RidgeCV, LassoCV, Ridge, Lasso
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-# завантаження даних із CSV
+# -------------------------------------------------------------------
+# ЕТАП 0: ЗАВАНТАЖЕННЯ ТА ПЕРЕВІРКА ДАНИХ
+# -------------------------------------------------------------------
 data = pd.read_csv("WineQT.csv")
-
-# перевіримо, а що всередині
-print('ЕТАП 0: ЗАВАНТАЖИЛИ ДАТАСЕТ')
+print("ЕТАП 0: ЗАВАНТАЖИЛИ ДАТАСЕТ")
 print(data.info(True))
 
-# Видалимо непотрібну колонку Id
-data = data.drop("Id", axis='columns')
+# Видаляємо службовий стовпчик Id (якщо є)
+if "Id" in data.columns:
+    data = data.drop("Id", axis="columns")
 
-print('ЕТАП 1: ОЧИСТИЛИ ДАНІ ВІД КОЛОНКИ ID ОСТАННЬОЇ')
+print("\nЕТАП 1: ОЧИСТИЛИ ДАНІ (видалили Id за наявності)")
 print(data.info(True))
 
-print('ЕТАП 2: ПОШУК КОРЕЛЯЦІЙ ЗА ДОПОМОГОЮ КОРЕЛЯЦІЙНОЇ МАТРИЦІ')
-
-# побудова кореляційної матриці
-plt.figure(figsize=(14,10))
-
-# тут виклик data.corr() треба для того щоб витягти з data frame pairwise correlation (попарну кореляцію)
-# стандартно використовуються коефіцієнти Пірсона
+# -------------------------------------------------------------------
+# ЕТАП 2: КОРЕЛЯЦІЙНА МАТРИЦЯ
+# -------------------------------------------------------------------
+print("\nЕТАП 2: ПОШУК КОРЕЛЯЦІЙ (heatmap)")
+plt.figure(figsize=(14, 10))
 sns.heatmap(data.corr(), annot=True, cmap="coolwarm")
-plt.title("Кореляція між різними ознаками датасету")
+plt.title("Кореляція між ознаками (включно з alcohol)")
+plt.tight_layout()
 plt.show()
 
-# В датасеті нема price тому будемо пробувати робити лінійну регресію оцінку якості
-print('ЕТАП 3: ГОТУЄМО ВХІДНІ ЗМІННІ (ЕСТИМАТОРИ) ТА ЦІЛЬ У ЯКОСТІ оцінки Quantity')
+# -------------------------------------------------------------------
+# ЕТАП 3: ФОРМУЄМО ОЗНАКИ (X) ТА ЦІЛЬ (y)
+# -------------------------------------------------------------------
+# ЦІЛЬ — НЕПЕРЕРВНА: alcohol
+# У X не повинно бути alcohol
+print("\nЕТАП 3: ГОТУЄМО ВХІДНІ ЗМІННІ (X) ТА ЦІЛЬ (y = alcohol)")
+y = data["alcohol"].astype(float)
+X = data.drop(columns=["alcohol"])
 
-# на вхід надходять всі колонки окрім якості яку треба оцінити
-X = data.drop("quality", axis='columns')
-y = data["quality"]
+# -------------------------------------------------------------------
+# ЕТАП 4: РОЗПОДІЛ НА TRAIN / VAL / TEST + МАСШТАБУВАННЯ
+# -------------------------------------------------------------------
+print("\nЕТАП 4: РОЗПОДІЛ НА TRAIN / VAL / TEST ТА МАСШТАБУВАННЯ")
 
-print('ЕТАП 4: ФОРМУЄМО ТРЕНУВАЛЬНІ ТА НАВЧАЛЬНІ ДАТАСЕТИ ТА МАСШТАБУЄМО')
-# ділимо обидві множини на тренувальні та для тестування (використаємо 80/20 пропорцію)
-random_shuffle = 47
-size_for_testing = 0.2
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=size_for_testing, random_state=random_shuffle)
+RANDOM_STATE = 47
+train_size = 0.6
+val_size = 0.2
+test_size = 0.2
+assert abs(train_size + val_size + test_size - 1.0) < 1e-9
 
-# на вході маємо ознаки в різних масштабах (alcohol~10, а sulphates~0.5)
-# щоб коефіцієнти були сумісні між собою потрібно масштабувати
+# 1) TRAIN vs (VAL+TEST)
+X_train, X_temp, y_train, y_temp = train_test_split(
+    X, y, test_size=(1 - train_size), random_state=RANDOM_STATE
+)
+
+# 2) (VAL+TEST) -> VAL / TEST
+X_val, X_test, y_val, y_test = train_test_split(
+    X_temp, y_temp,
+    test_size=test_size / (test_size + val_size),
+    random_state=RANDOM_STATE
+)
+
+# Масштабуємо: fit тільки на TRAIN, transform на VAL/TEST
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
+X_val_scaled = scaler.transform(X_val)
 X_test_scaled = scaler.transform(X_test)
 
-print('ЕТАП 5: НАВЧАННЯ МОДЕЛІ')
-# створюємо та навчаємо модель
-# будуємо класичну лінійну регресію (OLS ordinary least squares): модель мінімізує суму квадратів похибок (MSE).
-model = LinearRegression()
-model.fit(X_train_scaled, y_train)
+print(f"Форми: train={X_train.shape}, val={X_val.shape}, test={X_test.shape}")
 
-print('ЕТАП 6: ВИКОРИСТАННЯ МОДЕЛІ')
-# прогноз на тестовому датасеті
-y_pred = model.predict(X_test_scaled)
 
-print('ЕТАП 7: АНАЛІЗ РЕЗУЛЬТАТІВ')
-
-# Метрики якості
-# MSE (середньоквадратична похибка) – «штрафна функція» моделі.
-# MAE (середня абсолютна похибка) – «середній відхил у балах».
-# R² (коефіцієнт детермінації) – наскільки добре модель пояснює варіацію у даних (0 → погано, 1 → ідеально).
-
-mse = mean_squared_error(y_test, y_pred)
-mae = mean_absolute_error(y_test, y_pred)
-r2 = r2_score(y_test, y_pred)
-
-print(f"MSE: {mse:.2f}")
-print(f"MAE: {mae:.2f}")
-print(f"R²: {r2:.2f}")
-
-# вплив ознак (коефіцієнти моделі)
-coefficients = pd.DataFrame({
-    "Feature": X.columns,
-    "Coefficient": model.coef_
-}).sort_values(by="Coefficient", ascending=False)
-
-print('\nКоефіцієнти OLS:\n', coefficients)
-
-# ---------------------------------------------------------------
-# ЕТАП 8: ДОДАЄМО ДВІ ШТРАФНІ ФУНКЦІЇ (РЕГУЛЯРИЗАЦІЮ)
-# Ridge (L2): додає до втрат суму квадратів коефіцієнтів: alpha * ||w||_2^2
-# Lasso (L1): додає до втрат суму модулів коефіцієнтів: alpha * ||w||_1
-# Обидві зменшують "розмах" коефіцієнтів і борються з мультиколінеарністю/overfitting.
-# Ridge зменшує всі коефіцієнти плавно; Lasso може занулювати деякі (фічер-селекція).
-# Для підбору сили штрафу alpha використаємо крос-валідацію (CV) на сітці.
-# ---------------------------------------------------------------
-
-print('ЕТАП 8: НАВЧАННЯ RidgeCV (L2) та LassoCV (L1) з підбором alpha')
-
-# сітка можливих alpha (логарифмічна шкала)
-alphas = np.logspace(-3, 3, 21)  # від 0.001 до 1000
-
-# RidgeCV: за замовчуванням оптимізує за MSE через cross-val
-ridge = RidgeCV(alphas=alphas, cv=5)
-ridge.fit(X_train_scaled, y_train)
-
-# LassoCV: підбирає alpha, тут бажано збільшити max_iter на випадок повільної збіжності
-lasso = LassoCV(alphas=alphas, cv=5, max_iter=10000, random_state=random_shuffle)
-lasso.fit(X_train_scaled, y_train)
-
-print(f"Найкраще alpha для Ridge: {ridge.alpha_:.5f}")
-print(f"Найкраще alpha для Lasso: {lasso.alpha_:.5f}")
-
-print('ЕТАП 9: ПРОГНОЗИ ТА МЕТРИКИ ДЛЯ RIDGE ТА LASSO')
-y_pred_ridge = ridge.predict(X_test_scaled)
-y_pred_lasso = lasso.predict(X_test_scaled)
-
-mse_ridge = mean_squared_error(y_test, y_pred_ridge)
-mae_ridge = mean_absolute_error(y_test, y_pred_ridge)
-r2_ridge = r2_score(y_test, y_pred_ridge)
-
-mse_lasso = mean_squared_error(y_test, y_pred_lasso)
-mae_lasso = mean_absolute_error(y_test, y_pred_lasso)
-r2_lasso = r2_score(y_test, y_pred_lasso)
-
-print('ЕТАП 10: ПОРІВНЯННЯ МЕТРИК (менше — краще для MSE/MAE; більше — краще для R²)')
-print(f"Ridge | alpha={ridge.alpha_:.5f} -> MSE: {mse_ridge:.3f}, MAE: {mae_ridge:.3f}, R²: {r2_ridge:.3f}")
-print(f"Lasso | alpha={lasso.alpha_:.5f} -> MSE: {mse_lasso:.3f}, MAE: {mae_lasso:.3f}, R²: {r2_lasso:.3f}")
-
-coef_df = pd.DataFrame({
-    "Feature": X.columns,
-    "OLS": model.coef_,
-    "Ridge": ridge.coef_,
-    "Lasso": lasso.coef_,
-}).set_index("Feature").sort_index()
-
-print('ЕТАП 11: Порівняння коефіцієнтів (OLS vs Ridge vs Lasso):\n', coef_df)
-
-# Скільки коефіцієнтів занулив Lasso (фічер-селекція)?
-n_zeros_lasso = np.sum(np.isclose(lasso.coef_, 0.0))
-print(f"Lasso занулило коефіцієнтів: {n_zeros_lasso} із {len(lasso.coef_)}")
-
-print('ЕТАП 12: ВІЗУАЛІЗАЦІЯ ТА ПОРІВНЯННЯ МЕТРИК')
-metrics_table = pd.DataFrame({
-    "Model": ["OLS", "Ridge", "Lasso"],
-    "MSE": [mse, mse_ridge, mse_lasso],
-    "MAE": [mae, mae_ridge, mae_lasso],
-    "R2": [r2, r2_ridge, r2_lasso],
-})
-print('\nЗведена таблиця метрик:\n', metrics_table)
-
-print('ЕТАП 13: ПАРИТЕТНІ ГРАФІКИ (ŷ проти y) ДЛЯ КОЖНОЇ МОДЕЛІ')
+# -------------------------------------------------------------------
+# ДОПОМІЖНІ ФУНКЦІЇ
+# -------------------------------------------------------------------
+def print_reg_metrics(name, y_true, y_pred):
+    mse = mean_squared_error(y_true, y_pred)
+    mae = mean_absolute_error(y_true, y_pred)
+    r2 = r2_score(y_true, y_pred)
+    print(f"{name:>10} | MSE: {mse:.4f} | MAE: {mae:.4f} | R²: {r2:.4f}")
+    return {"MSE": mse, "MAE": mae, "R2": r2}
 
 
 def parity_plot(y_true, y_pred, title):
@@ -155,58 +91,173 @@ def parity_plot(y_true, y_pred, title):
     lo = min(y_true.min(), y_pred.min())
     hi = max(y_true.max(), y_pred.max())
     plt.plot([lo, hi], [lo, hi], linestyle='--')  # ідеальна лінія y=x
-    plt.xlabel("Факт (y)")
-    plt.ylabel("Передбачення (ŷ)")
+    plt.xlabel("Факт alcohol")
+    plt.ylabel("Передбачення alcohol")
     plt.title(title)
     plt.grid(alpha=0.3)
     plt.tight_layout()
     plt.show()
 
 
-parity_plot(y_test, y_pred, "Parity plot — OLS (ŷ vs y)")
-parity_plot(y_test, y_pred_ridge, f"Parity plot — Ridge (α={ridge.alpha_:.3g})")
-parity_plot(y_test, y_pred_lasso, f"Parity plot — Lasso (α={lasso.alpha_:.3g})")
-
-print('ЕТАП 14: ДЕМОНСТРАЦІЯ, ДЕ МОДЕЛЬ ПОМИЛЯЄТЬСЯ')
-
-
 def residual_plots(y_true, y_pred, title_prefix):
     resid = y_true - y_pred
 
-    # 14.1 Гістограма похибок
+    # 1) Гістограма похибок
     plt.figure(figsize=(8, 4))
     plt.hist(resid, bins=20)
     plt.axvline(0, linestyle='--')
     plt.title(f"{title_prefix}: розподіл похибок (y - ŷ)")
-    plt.xlabel("Похибка")
+    plt.xlabel("Похибка alcohol")
     plt.ylabel("К-сть")
     plt.grid(alpha=0.3)
     plt.tight_layout()
     plt.show()
 
-    # 14.2 Похибка vs Передбачення
+    # 2) Похибка vs Передбачення
     plt.figure(figsize=(7, 5))
     plt.scatter(y_pred, resid, alpha=0.5, s=20)
     plt.axhline(0, linestyle='--')
     plt.title(f"{title_prefix}: похибка vs передбачення")
-    plt.xlabel("Передбачення (ŷ)")
+    plt.xlabel("Передбачення alcohol (ŷ)")
     plt.ylabel("Похибка (y - ŷ)")
     plt.grid(alpha=0.3)
     plt.tight_layout()
     plt.show()
 
 
-residual_plots(y_test, y_pred, "OLS")
-residual_plots(y_test, y_pred_ridge, f"Ridge (α={ridge.alpha_:.3g})")
-residual_plots(y_test, y_pred_lasso, f"Lasso (α={lasso.alpha_:.3g})")
+def overfit_report(name, m_train, m_val, r2_gap_thresh=0.05, mae_gap_rel=0.10):
+    """
+    Евристика:
+    - R²(train) - R²(val) > r2_gap_thresh → ризик overfitting
+    - MAE(val) > (1 + mae_gap_rel) * MAE(train) → ризик overfitting
+    """
+    r2_gap = m_train["R2"] - m_val["R2"]
+    mae_rel = (m_val["MAE"] - m_train["MAE"]) / max(1e-9, m_train["MAE"])
 
-print("ЕТАП 15: Лінії регресії по окремих фічах (OLS/Ridge/Lasso)")
+    print(f"\n[Overfitting check] {name}")
+    print(f"  R² gap (train - val): {r2_gap:+.3f}  |  MAE relative gap: {mae_rel:+.1%}")
 
-# які фічі показувати
-features_to_plot = ["alcohol", "sulphates", "volatile acidity", "density"]
+    flags = []
+    if r2_gap > r2_gap_thresh:
+        flags.append(f"R² gap > {r2_gap_thresh}")
+    if mae_rel > mae_gap_rel:
+        flags.append(f"MAE(val) на {mae_rel:.0%} більша за MAE(train)")
 
-# середні значення по train (щоб «заморозити» інші ознаки)
-X_train_means = X_train.mean()
+    if flags:
+        print("  ⚠️ Ознаки overfitting → " + "; ".join(flags))
+    else:
+        print("  ✅ Явних ознак overfitting не виявлено")
+
+
+# -------------------------------------------------------------------
+# ЕТАП 5: НАВЧАННЯ OLS (без штрафу)
+# -------------------------------------------------------------------
+print("\nЕТАП 5: НАВЧАННЯ OLS (Ordinary Least Squares) для alcohol")
+ols = LinearRegression()
+ols.fit(X_train_scaled, y_train)
+
+# Прогнози OLS
+y_pred_tr_ols = ols.predict(X_train_scaled)
+y_pred_va_ols = ols.predict(X_val_scaled)
+y_pred_te_ols = ols.predict(X_test_scaled)
+
+print("\nЕТАП 6: МЕТРИКИ OLS (train/val/test)")
+m_ols_tr = print_reg_metrics("OLS-train", y_train, y_pred_tr_ols)
+m_ols_va = print_reg_metrics(" OLS-val", y_val, y_pred_va_ols)
+m_ols_te = print_reg_metrics("OLS-test", y_test, y_pred_te_ols)
+overfit_report("OLS", m_ols_tr, m_ols_va)
+
+# -------------------------------------------------------------------
+# ЕТАП 7: НАВЧАННЯ RIDGE/LASSO З CV (штрафні функції L2 та L1)
+# -------------------------------------------------------------------
+print("\nЕТАП 7: НАВЧАННЯ RidgeCV (L2) та LassoCV (L1) для alcohol")
+alphas = np.logspace(-3, 3, 21)  # 0.001 ... 1000
+
+ridge = RidgeCV(alphas=alphas, cv=5)
+ridge.fit(X_train_scaled, y_train)
+
+lasso = LassoCV(alphas=alphas, cv=5, max_iter=10000, random_state=RANDOM_STATE)
+lasso.fit(X_train_scaled, y_train)
+
+print(f"Найкраще alpha для Ridge: {ridge.alpha_:.5f}")
+print(f"Найкраще alpha для Lasso: {lasso.alpha_:.5f}")
+
+# Прогнози Ridge/Lasso
+y_pred_tr_r = ridge.predict(X_train_scaled)
+y_pred_va_r = ridge.predict(X_val_scaled)
+y_pred_te_r = ridge.predict(X_test_scaled)
+
+y_pred_tr_l = lasso.predict(X_train_scaled)
+y_pred_va_l = lasso.predict(X_val_scaled)
+y_pred_te_l = lasso.predict(X_test_scaled)
+
+print("\nЕТАП 8: МЕТРИКИ RIDGE (train/val/test)")
+m_r_tr = print_reg_metrics("Ridge-tr", y_train, y_pred_tr_r)
+m_r_va = print_reg_metrics(" Ridge-va", y_val, y_pred_va_r)
+m_r_te = print_reg_metrics("Ridge-te", y_test, y_pred_te_r)
+overfit_report("Ridge", m_r_tr, m_r_va)
+
+print("\nЕТАП 9: МЕТРИКИ LASSO (train/val/test)")
+m_l_tr = print_reg_metrics("Lasso-tr", y_train, y_pred_tr_l)
+m_l_va = print_reg_metrics(" Lasso-va", y_val, y_pred_va_l)
+m_l_te = print_reg_metrics("Lasso-te", y_test, y_pred_te_l)
+overfit_report("Lasso", m_l_tr, m_l_va)
+
+# -------------------------------------------------------------------
+# ЕТАП 10: ПОРІВНЯННЯ КОЕФІЦІЄНТІВ (вплив ознак на alcohol)
+# -------------------------------------------------------------------
+coef_df = pd.DataFrame({
+    "Feature": X.columns,
+    "OLS": ols.coef_,
+    "Ridge": ridge.coef_,
+    "Lasso": lasso.coef_
+}).set_index("Feature").sort_index()
+
+print("\nЕТАП 10: Порівняння коефіцієнтів (OLS vs Ridge vs Lasso) для alcohol:")
+print(coef_df)
+
+n_zeros_lasso = np.sum(np.isclose(lasso.coef_, 0.0))
+print(f"\nLasso занулило коефіцієнтів: {n_zeros_lasso} із {len(lasso.coef_)}")
+
+# -------------------------------------------------------------------
+# ЕТАП 11: ЗВЕДЕНА ТАБЛИЦЯ МЕТРИК (val/test ключові для узагальнення)
+# -------------------------------------------------------------------
+metrics_table = pd.DataFrame({
+    "Split": ["train", "val", "test"],
+    "OLS_MSE": [m_ols_tr["MSE"], m_ols_va["MSE"], m_ols_te["MSE"]],
+    "OLS_R2": [m_ols_tr["R2"], m_ols_va["R2"], m_ols_te["R2"]],
+    "Ridge_MSE": [m_r_tr["MSE"], m_r_va["MSE"], m_r_te["MSE"]],
+    "Ridge_R2": [m_r_tr["R2"], m_r_va["R2"], m_r_te["R2"]],
+    "Lasso_MSE": [m_l_tr["MSE"], m_l_va["MSE"], m_l_te["MSE"]],
+    "Lasso_R2": [m_l_tr["R2"], m_l_va["R2"], m_l_te["R2"]],
+})
+print("\nЗведена таблиця метрик (train/val/test) для alcohol:")
+print(metrics_table)
+
+# -------------------------------------------------------------------
+# ЕТАП 12: ПАРИТЕТНІ ГРАФІКИ (ŷ vs y) ДЛЯ КОЖНОЇ МОДЕЛІ — test-спліт
+# -------------------------------------------------------------------
+print("\nЕТАП 12: Parity (ŷ vs y) на тесті — alcohol")
+parity_plot(y_test, y_pred_te_ols, "Parity — OLS (alcohol, test)")
+parity_plot(y_test, y_pred_te_r, f"Parity — Ridge (α={ridge.alpha_:.3g}, alcohol, test)")
+parity_plot(y_test, y_pred_te_l, f"Parity — Lasso (α={lasso.alpha_:.3g}, alcohol, test)")
+
+# -------------------------------------------------------------------
+# ЕТАП 13: RESIDUALS — де модель помиляється (test-спліт)
+# -------------------------------------------------------------------
+print("\nЕТАП 13: Розподіл похибок та похибка vs передбачення (test) — alcohol")
+residual_plots(y_test, y_pred_te_ols, "OLS (alcohol, test)")
+residual_plots(y_test, y_pred_te_r, f"Ridge (α={ridge.alpha_:.3g}, alcohol, test)")
+residual_plots(y_test, y_pred_te_l, f"Lasso (α={lasso.alpha_:.3g}, alcohol, test)")
+
+# -------------------------------------------------------------------
+# ЕТАП 14: ЛІНІЇ РЕГРЕСІЇ В ПРОЄКЦІЇ ОКРЕМИХ ОЗНАК (інші на mean(train))
+# -------------------------------------------------------------------
+print("\нЕТАП 14: Лінії регресії для вибраних ознак (OLS/Ridge/Lasso) — таргет alcohol")
+# Обери найбільш показові фічі (alcohol тут — таргет, тому його НЕ малюємо як ознаку)
+features_to_plot = ["sulphates", "volatile acidity", "residual sugar", "density"]
+
+X_train_means = X_train.mean()  # «заморожуємо» інші фічі на середніх train
 
 
 def predict_line_for_feature(feature_name, model_obj, n_points=200):
@@ -225,12 +276,12 @@ def predict_line_for_feature(feature_name, model_obj, n_points=200):
 
 
 for feat in features_to_plot:
-    # Фактичні точки з тесту по обраній фічі
     plt.figure(figsize=(7, 5))
-    plt.scatter(X_test[feat], y_test, alpha=0.55, s=25, label="Факт (test)")
+    # Розсіяння фактів (test)
+    plt.scatter(X_test[feat], y_test, alpha=0.55, s=25, label="Факт alcohol (test)")
 
     # Лінії трьох моделей
-    gx, gy_ols = predict_line_for_feature(feat, model)
+    gx, gy_ols = predict_line_for_feature(feat, ols)
     _, gy_ridge = predict_line_for_feature(feat, ridge)
     _, gy_lasso = predict_line_for_feature(feat, lasso)
 
@@ -239,10 +290,72 @@ for feat in features_to_plot:
     plt.plot(gx[order], gy_ridge[order], '--', label=f'Ridge (α={ridge.alpha_:.3g})')
     plt.plot(gx[order], gy_lasso[order], ':', label=f'Lasso (α={lasso.alpha_:.3g})')
 
-    plt.title(f"Якість vs {feat}: дані (test) та лінії регресії")
+    plt.title(f"alcohol vs {feat}: дані (test) та лінії регресії")
     plt.xlabel(feat)
-    plt.ylabel("quality")
+    plt.ylabel("alcohol")
     plt.grid(alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
+
+# -------------------------------------------------------------------
+# ЕТАП 15: LEARNING CURVE — OLS (pipeline: scaler + OLS)
+# -------------------------------------------------------------------
+print("\nЕТАП 15: Learning Curve — OLS (R²) для alcohol")
+
+
+def plot_learning_curve(estimator, X_all, y_all, title, cv=5, n_jobs=None):
+    train_sizes, train_scores, val_scores = learning_curve(
+        estimator, X_all, y_all, cv=cv, n_jobs=n_jobs,
+        train_sizes=np.linspace(0.1, 1.0, 8), scoring="r2"
+    )
+    train_mean = train_scores.mean(axis=1)
+    val_mean = val_scores.mean(axis=1)
+
+    plt.figure(figsize=(7, 5))
+    plt.plot(train_sizes, train_mean, marker='o', label='Train R²')
+    plt.plot(train_sizes, val_mean, marker='o', label='Val R²')
+    plt.xlabel("Кількість тренувальних зразків")
+    plt.ylabel("R² (вище — краще)")
+    plt.title(title)
+    plt.grid(alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+pipe_ols = Pipeline([("scaler", StandardScaler()), ("mdl", LinearRegression())])
+plot_learning_curve(pipe_ols, X, y, "Learning Curve — OLS (R²), target: alcohol", cv=5)
+
+# -------------------------------------------------------------------
+# ЕТАП 16: VALIDATION CURVES — Ridge/Lasso (α vs R²) для alcohol
+# -------------------------------------------------------------------
+print("\nЕТАП 16: Validation Curves — Ridge/Lasso (α vs R²) для alcohol")
+alphas_vc = np.logspace(-3, 3, 21)
+
+
+def plot_validation_curve(model_cls, param_name, param_range, X_all, y_all, title, cv=5):
+    pipe = Pipeline([("scaler", StandardScaler()), ("mdl", model_cls())])
+    train_scores, val_scores = validation_curve(
+        pipe, X_all, y_all,
+        param_name=f"mdl__{param_name}",
+        param_range=param_range,
+        cv=cv, scoring="r2", n_jobs=None
+    )
+    train_mean = train_scores.mean(axis=1)
+    val_mean = val_scores.mean(axis=1)
+
+    plt.figure(figsize=(7, 5))
+    plt.semilogx(param_range, train_mean, marker='o', label='Train R²')
+    plt.semilogx(param_range, val_mean, marker='o', label='Val R²')
+    plt.xlabel(param_name)
+    plt.ylabel("R² (вище — краще)")
+    plt.title(title)
+    plt.grid(alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+plot_validation_curve(Ridge, "alpha", alphas_vc, X, y, "Validation Curve — Ridge (α vs R²), target: alcohol", cv=5)
+plot_validation_curve(Lasso, "alpha", alphas_vc, X, y, "Validation Curve — Lasso (α vs R²), target: alcohol", cv=5)
